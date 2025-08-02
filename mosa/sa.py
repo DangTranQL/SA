@@ -2,7 +2,7 @@ import math
 import random
 
 class SimulatedAnnealing:
-    def __init__(self, n_iterations=1000, step_size=0.1, temp=10):
+    def __init__(self, temp=10, n_iterations=1000, step_size=0.1):
         self.n_iterations = n_iterations
         self.step_size = step_size
         self.temp = temp
@@ -51,4 +51,4 @@ class SimulatedAnnealing:
             if i % 100 == 0:
                 print(f"Iteration {i}, Temperature {t:.3f}")
 
-        return sol
+        return sol, sol_eval
