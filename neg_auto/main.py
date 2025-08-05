@@ -73,4 +73,4 @@ if __name__ == "__main__":
 
     optimizer = pyamosa.Optimizer(config)
 
-    optimizer.run(problem, pyamosa.StopPhyWindow(10))
+    optimizer.run(problem, pyamosa.StopMaxTime("1:14"))
