@@ -1,76 +1,87 @@
-from eq import *
+import torch
+from torchjd import backward
+from torchjd.aggregation import UPGrad
+from torch import nn
+from torch.optim import SGD
 from scipy.optimize import fsolve
 import numpy as np
-import pyamosa
+from tqdm import tqdm
+from eq import S_alpha_xss_analytic, S_n_xss_analytic, generate_initial_guesses, Equs
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
 t = 0
 
-# DEFINE FUNCTION THAT SOLVES FOR STEADY STATES XSS GIVEN AN INITIAL GUESS
 def ssfinder(alpha_val,n_val):
 
-    # Load initial guesses for solving which can be a function of a choice of alpha and n values
     InitGuesses = generate_initial_guesses(alpha_val, n_val)
 
-    # Define array of parameters
-    params = np.array([alpha_val, n_val])
+    params = torch.tensor([alpha_val, n_val])
 
-    # For each initial guess in the list of initial guesses we loaded
     for InitGuess in InitGuesses:
 
-        # Get solution details
         output, infodict, intflag, _ = fsolve(Equs, InitGuess, args=(t, params), xtol=1e-12, full_output=True)
-        xss = output
-        fvec = infodict['fvec']
+        xss = torch.from_numpy(output)
+        fvec = torch.from_numpy(infodict['fvec'])
 
-        # Check if stable attractor point
         delta = 1e-8
         dEqudx = (Equs(xss+delta, t, params)-Equs(xss, t, params))/delta
-        jac = np.array([[dEqudx]])
+        jac = torch.tensor([[dEqudx]])
         eig = jac
-        instablility = np.real(eig) >= 0
+        instablility = torch.real(eig) >= 0
 
 
-        # Check if it is sufficiently large, has small residual, and successfully converges
-        if xss > 0.04 and np.linalg.norm(fvec) < 1e-10 and intflag == 1 and instablility==False:
-            # If so, it is a valid solution and we return it as a scalar
+        if xss > 0.04 and torch.linalg.norm(fvec) < 1e-10 and intflag == 1 and instablility==False:
             return xss[0]
 
-    # If no valid solutions are found after trying all initial guesses
     return float('nan')
 
-class sensitivity(pyamosa.Problem):
-    n_var = 2
-
-    def __init__(self):
-        pyamosa.Problem.__init__(self, sensitivity.n_var, [pyamosa.Type.REAL]*sensitivity.n_var, [0.01]*sensitivity.n_var, [50.0, 20.0], 2, 0)
-    
-    def evaluate(self, x, out):
-        alpha, n = x
-        xss = ssfinder(alpha, n) # Call ssfinder here
-
-        if xss == float('nan'):
-            out['f'] = [float('inf'), float('inf')]
-
+def objective_function_batch(alpha_vec, n_vec):
+    batch_size = alpha_vec.shape[0]
+    S_alpha_list = []
+    S_n_list = []
+    for i in range(batch_size):
+        alpha_i = alpha_vec[i]
+        n_i = n_vec[i]
+        xss = torch.tensor(ssfinder(alpha_i.item(), n_i.item()))
+        if np.isnan(xss):
+            S_alpha_list.append(torch.tensor(float('inf'), requires_grad=True, device=device))
+            S_n_list.append(torch.tensor(float('inf'), requires_grad=True, device=device))
         else:
-            s_alpha = S_alpha_xss_analytic(xss, alpha, n)
-            s_n = S_n_xss_analytic(xss, alpha, n)
-            out['f'] = [s_alpha, s_n]
+            S_alpha_val = S_alpha_xss_analytic(xss, alpha_i, n_i)
+            S_n_val = S_n_xss_analytic(xss, alpha_i, n_i)
+            S_alpha_list.append(torch.tensor(S_alpha_val, requires_grad=True, device=device))
+            S_n_list.append(torch.tensor(S_n_val, requires_grad=True, device=device))
+    return torch.stack(S_alpha_list), torch.stack(S_n_list)
 
-if __name__ == "__main__":
-    problem = sensitivity()
+batch_size = 20
 
-    config = pyamosa.Config()
-    config.archive_hard_limit = 10000
-    config.archive_soft_limit = 5000
-    config.archive_gamma = 2
-    config.clustering_max_iterations = 300
-    config.hill_climbing_iterations = 500
-    config.initial_temperature = 500
-    config.cooling_factor = 0.9
-    config.annealing_iterations = 1000
-    config.annealing_strength = 1
-    config.multiprocess_enabled = True
+alpha = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 50).to(device), requires_grad=True)
+n = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 10).to(device), requires_grad=True)
 
-    optimizer = pyamosa.Optimizer(config)
+optimizer = SGD([alpha, n], lr=0.05)
 
-    optimizer.run(problem, pyamosa.StopMaxTime("1:14"))
+pareto_front = []
+
+num_epochs = 100
+with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
+    for epoch in range(num_epochs):
+        optimizer.zero_grad()
+
+        S_alpha, S_n = objective_function_batch(alpha, n)
+
+        backward([S_alpha, S_n], aggregator=UPGrad(), inputs=[alpha, n])
+
+        optimizer.step()
+
+        valid_mask = torch.isfinite(S_alpha) & torch.isfinite(S_n)
+        pareto_front.extend(torch.stack([S_alpha[valid_mask], S_n[valid_mask]], dim=1).detach().cpu().numpy())
+
+        pbar.update(1)
+        if epoch % 50 == 0:
+            print(f"Epoch {epoch}: Median Loss = {((S_alpha + S_n)/2).median().item():.4f}")
+
+pareto_front_np = np.array(pareto_front)
+
+np.savetxt("points.csv", pareto_front_np, delimiter=",", header="x,y", comments="")
