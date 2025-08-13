@@ -41,19 +41,24 @@ def objective_function_batch(alpha_vec, n_vec):
     batch_size = alpha_vec.shape[0]
     S_alpha_list = []
     S_n_list = []
+    alpha_list = []
+    n_list = []
     for i in range(batch_size):
         alpha_i = alpha_vec[i]
         n_i = n_vec[i]
         xss = torch.tensor(ssfinder(alpha_i.item(), n_i.item()))
         if np.isnan(xss):
-            S_alpha_list.append(torch.tensor(float('inf'), requires_grad=True, device=device))
-            S_n_list.append(torch.tensor(float('inf'), requires_grad=True, device=device))
+            # S_alpha_list.append(torch.tensor(float('nan'), requires_grad=True, device=device))
+            # S_n_list.append(torch.tensor(float('nan'), requires_grad=True, device=device))
+            continue
         else:
             S_alpha_val = S_alpha_xss_analytic(xss, alpha_i, n_i)
             S_n_val = S_n_xss_analytic(xss, alpha_i, n_i)
             S_alpha_list.append(torch.tensor(S_alpha_val, requires_grad=True, device=device))
             S_n_list.append(torch.tensor(S_n_val, requires_grad=True, device=device))
-    return torch.stack(S_alpha_list), torch.stack(S_n_list)
+            alpha_list.append(torch.tensor(alpha_i, requires_grad=True, device=device))
+            n_list.append(torch.tensor(n_i, requires_grad=True, device=device))
+    return torch.stack(S_alpha_list), torch.stack(S_n_list), torch.stack(alpha_list), torch.stack(n_list)
 
 batch_size = 64
 
@@ -69,10 +74,14 @@ with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
     for epoch in range(num_epochs):
         optimizer.zero_grad()
 
-        S_alpha, S_n = objective_function_batch(alpha, n)
-        
+        S_alpha, S_n, alpha_list, n_list = objective_function_batch(alpha, n)
 
-        backward([S_alpha, S_n], aggregator=UPGrad(), inputs=[alpha, n])
+        S_alpha.retain_grad()
+        S_n.retain_grad()
+        alpha_list.retain_grad()
+        n_list.retain_grad()
+
+        backward([S_alpha, S_n], aggregator=UPGrad(), inputs=[alpha_list, n_list])
 
         optimizer.step()
 
