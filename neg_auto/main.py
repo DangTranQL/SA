@@ -55,21 +55,22 @@ def objective_function_batch(alpha_vec, n_vec):
             S_n_list.append(torch.tensor(S_n_val, requires_grad=True, device=device))
     return torch.stack(S_alpha_list), torch.stack(S_n_list)
 
-batch_size = 20
+batch_size = 64
 
 alpha = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 50).to(device), requires_grad=True)
 n = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 10).to(device), requires_grad=True)
 
-optimizer = SGD([alpha, n], lr=0.05)
+optimizer = SGD([alpha, n], lr=0.001)
 
 pareto_front = []
 
-num_epochs = 100
+num_epochs = 1000
 with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
     for epoch in range(num_epochs):
         optimizer.zero_grad()
 
         S_alpha, S_n = objective_function_batch(alpha, n)
+        
 
         backward([S_alpha, S_n], aggregator=UPGrad(), inputs=[alpha, n])
 
@@ -79,7 +80,7 @@ with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
         pareto_front.extend(torch.stack([S_alpha[valid_mask], S_n[valid_mask]], dim=1).detach().cpu().numpy())
 
         pbar.update(1)
-        if epoch % 50 == 0:
+        if epoch % 10 == 0:
             print(f"Epoch {epoch}: Median Loss = {((S_alpha + S_n)/2).median().item():.4f}")
 
 pareto_front_np = np.array(pareto_front)

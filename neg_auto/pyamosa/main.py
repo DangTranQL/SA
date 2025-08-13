@@ -60,11 +60,11 @@ if __name__ == "__main__":
     problem = sensitivity()
 
     config = pyamosa.Config()
-    config.archive_hard_limit = 10000
+    config.archive_hard_limit = 2000
     config.archive_soft_limit = 5000
     config.archive_gamma = 2
-    config.clustering_max_iterations = 300
-    config.hill_climbing_iterations = 500
+    config.clustering_max_iterations = 100
+    config.hill_climbing_iterations = 300
     config.initial_temperature = 500
     config.cooling_factor = 0.9
     config.annealing_iterations = 1000
