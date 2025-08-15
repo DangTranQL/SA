@@ -1,5 +1,6 @@
 import torch
-from torchjd import backward
+from torchjd import mtl_backward
+from torch.nn import Linear, ReLU, Sequential
 from torchjd.aggregation import UPGrad
 from torch import nn
 from torch.optim import SGD
@@ -48,8 +49,6 @@ def objective_function_batch(alpha_vec, n_vec):
         n_i = n_vec[i]
         xss = torch.tensor(ssfinder(alpha_i.item(), n_i.item()))
         if np.isnan(xss):
-            # S_alpha_list.append(torch.tensor(float('nan'), requires_grad=True, device=device))
-            # S_n_list.append(torch.tensor(float('nan'), requires_grad=True, device=device))
             continue
         else:
             S_alpha_val = S_alpha_xss_analytic(xss, alpha_i, n_i)
@@ -58,22 +57,29 @@ def objective_function_batch(alpha_vec, n_vec):
             S_n_list.append(torch.tensor(S_n_val, requires_grad=True, device=device))
             alpha_list.append(torch.tensor(alpha_i, requires_grad=True, device=device))
             n_list.append(torch.tensor(n_i, requires_grad=True, device=device))
-    return torch.stack(S_alpha_list), torch.stack(S_n_list), torch.stack(alpha_list), torch.stack(n_list)
+    return torch.stack(S_alpha_list), torch.stack(S_n_list)
+
+shared_module = Sequential(Linear(2, 4), ReLU(), Linear(4, 8), ReLU())
+alpha_module = Linear(8, 1)
+n_module = Linear(8, 1)
+params = [
+    *shared_module.parameters(),
+    *alpha_module.parameters(),
+    *n_module.parameters(),
+]
+
+optimizer = SGD(params, lr=0.1)
+aggregator = UPGrad()
+
+# pareto_front = []
 
 batch_size = 64
+num_epochs = 100
 
-alpha = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 50).to(device), requires_grad=True)
-n = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 10).to(device), requires_grad=True)
-
-optimizer = SGD([alpha, n], lr=0.001)
-
-pareto_front = []
-
-num_epochs = 1000
 with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
     for epoch in range(num_epochs):
-        optimizer.zero_grad()
-
+        alpha = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 50).to(device), requires_grad=True)
+        n = nn.Parameter(torch.FloatTensor(batch_size).uniform_(0.01, 10).to(device), requires_grad=True)
         S_alpha, S_n, alpha_list, n_list = objective_function_batch(alpha, n)
 
         S_alpha.retain_grad()
@@ -81,17 +87,25 @@ with tqdm(total=num_epochs, desc="Optimizing Population", ncols=100) as pbar:
         alpha_list.retain_grad()
         n_list.retain_grad()
 
-        backward([S_alpha, S_n], aggregator=UPGrad(), inputs=[alpha_list, n_list])
+        input = torch.stack([alpha_list, n_list], dim=1)
+
+        features = shared_module(input)
+        output1 = alpha_module(features)
+        output2 = n_module(features)
+
+        optimizer.zero_grad()
+
+        mtl_backward(losses=[S_alpha, S_n], features=features, aggregator=aggregator)
 
         optimizer.step()
 
-        valid_mask = torch.isfinite(S_alpha) & torch.isfinite(S_n)
-        pareto_front.extend(torch.stack([S_alpha[valid_mask], S_n[valid_mask]], dim=1).detach().cpu().numpy())
+        # valid_mask = torch.isfinite(S_alpha) & torch.isfinite(S_n)
+        # pareto_front.extend(torch.stack([S_alpha[valid_mask], S_n[valid_mask]], dim=1).detach().cpu().numpy())
 
         pbar.update(1)
         if epoch % 10 == 0:
             print(f"Epoch {epoch}: Median Loss = {((S_alpha + S_n)/2).median().item():.4f}")
 
-pareto_front_np = np.array(pareto_front)
+# pareto_front_np = np.array(pareto_front)
 
-np.savetxt("points.csv", pareto_front_np, delimiter=",", header="x,y", comments="")
+# np.savetxt("points.csv", pareto_front_np, delimiter=",", header="x,y", comments="")
