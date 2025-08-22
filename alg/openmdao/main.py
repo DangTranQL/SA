@@ -21,6 +21,14 @@ def pareto_front(results):
         mask = paretoset(np.column_stack((S_sens1_vals, S_sens2_vals)), sense=['min', 'min'])
         pareto_front = np.column_stack((S_sens1_vals[mask], S_sens2_vals[mask]))
 
+    else:
+        f1 = [r['f1'] for r in results]
+        f2 = [r['f2'] for r in results]
+        f1 = np.array(f1)
+        f2 = np.array(f2)
+        mask = paretoset(np.column_stack((f1, f2)), sense=['min', 'min'])
+        pareto_front = np.column_stack((f1[mask], f2[mask]))
+
     plt.figure(figsize=(10, 6))
     plt.scatter(pareto_front[:, 0], pareto_front[:, 1])
 
@@ -31,6 +39,10 @@ def pareto_front(results):
     elif circuit == "posneg":
         plt.xlabel(f'{labels[choice1]}')
         plt.ylabel(f'{labels[choice2]}')
+    
+    else:
+        plt.xlabel('f1')
+        plt.ylabel('f2')
 
     plt.title('Pareto Front')
     plt.grid(True)
@@ -41,5 +53,5 @@ def pareto_front(results):
 
 
 if __name__ == "__main__":
-    results = run(0, 100, 50000)
+    results = run(0, 10, 1000)
     pareto_front(results)

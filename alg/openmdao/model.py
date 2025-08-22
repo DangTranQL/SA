@@ -29,6 +29,12 @@ class SenFunc(om.ExplicitComponent):
             self.add_output(f'{labels[choice2]}', val=0.0)
             self.add_output('J', val=0.0)
 
+        else:
+            self.add_input('x', val = 1.0)
+            self.add_output('f1', val=0.0)
+            self.add_output('f2', val=0.0)
+            self.add_output('J', val=0.0)
+
         self.declare_partials('*', '*', method='fd')
 
     def compute(self, inputs, outputs):
@@ -71,6 +77,15 @@ class SenFunc(om.ExplicitComponent):
                 outputs[f'{labels[choice2]}'] = sens2
                 outputs['J'] = w1 * sens1 + w2 * sens2
 
+        else:
+            x = float(inputs['x'])
+            f1, f2 = Equs(x)
+            w1 = self.options['w1']
+            w2 = self.options['w2']
+            outputs['f1'] = f1
+            outputs['f2'] = f2
+            outputs['J'] = w1 * f1 + w2 * f2
+
 def weighted_optimization(w1, w2):
 
     prob = om.Problem(reports=False)
@@ -85,6 +100,9 @@ def weighted_optimization(w1, w2):
         model.add_design_var('beta_x', lower=0.01, upper=50.0)
         model.add_design_var('beta_y', lower=0.01, upper=50.0)
         model.add_design_var('n', lower=0.01, upper=10.0)
+
+    else:
+        model.add_design_var('x', lower=-1.0, upper=1.0)
 
     model.add_objective('J')
     prob.driver = om.ScipyOptimizeDriver()
@@ -102,6 +120,9 @@ def weighted_optimization(w1, w2):
         prob.set_val('beta_x', random.uniform(0.01, 50.0))
         prob.set_val('beta_y', random.uniform(0.01, 50.0))
         prob.set_val('n', random.uniform(0.01, 10.0))
+
+    else:
+        prob.set_val('x', random.uniform(-1.0, 1.0))
 
     prob.run_driver()
 
@@ -125,6 +146,16 @@ def weighted_optimization(w1, w2):
             'n': prob.get_val('n')[0],
             f'{labels[choice1]}': prob.get_val(f'{labels[choice1]}')[0],
             f'{labels[choice2]}': prob.get_val(f'{labels[choice2]}')[0],
+            'J': prob.get_val('J')[0]
+        }
+    
+    else:
+        return {
+            'w1': w1,
+            'w2': w2,
+            'x': prob.get_val('x')[0],
+            'f1': prob.get_val('f1')[0],
+            'f2': prob.get_val('f2')[0],
             'J': prob.get_val('J')[0]
         }
     
