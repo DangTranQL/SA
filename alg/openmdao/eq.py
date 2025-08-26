@@ -10,8 +10,8 @@ if circuit != "neg" and circuit != "posneg":
     print("Testing non-convex example")
     
     def Equs(x):
-        f1 = (x+0.5)**2 - np.cos(18*(x+0.5))
-        f2 = (x-0.5)**2 - np.cos(18*(x-0.5))
+        f1 = x
+        f2 = -x + 0.1*x**3
         return f1, f2
 
 else:
