@@ -6,6 +6,7 @@ from paretoset import paretoset
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import warnings
+import time
 from eq import *
 
 class EqusComp(om.ExplicitComponent):
@@ -150,6 +151,15 @@ def custom_run(runs=2):
     mask = paretoset(np.column_stack((f1, f2)), sense=['min', 'min'])
     pareto_front = np.column_stack((f1[mask], f2[mask]))
 
+    return pareto_front
+
+if __name__ == "__main__":
+    start_time = time.time()
+    warnings.filterwarnings("ignore")
+    pareto_front = custom_run(runs=200)
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time} seconds")
+
     plt.figure(figsize=(10, 6))
     plt.scatter(pareto_front[:, 0], pareto_front[:, 1])
     plt.xlabel('S_alpha')
@@ -158,7 +168,3 @@ def custom_run(runs=2):
     plt.grid(True)
     plt.legend()
     plt.show()
-
-if __name__ == "__main__":
-    warnings.filterwarnings("ignore")
-    custom_run(runs=100)
