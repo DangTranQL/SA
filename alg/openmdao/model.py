@@ -102,7 +102,7 @@ def weighted_optimization(w1, w2):
         model.add_design_var('n', lower=0.01, upper=10.0)
 
     else:
-        model.add_design_var('x', lower=-1.0, upper=1.0)
+        model.add_design_var('x', lower=-1.5, upper=-1.0)
 
     model.add_objective('J')
     prob.driver = om.ScipyOptimizeDriver()
@@ -122,7 +122,7 @@ def weighted_optimization(w1, w2):
         prob.set_val('n', random.uniform(0.01, 10.0))
 
     else:
-        prob.set_val('x', random.uniform(-1.0, 1.0))
+        prob.set_val('x', random.uniform(-1.5, -1.0))
 
     prob.run_driver()
 

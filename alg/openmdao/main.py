@@ -53,5 +53,5 @@ def pareto_front(results):
 
 
 if __name__ == "__main__":
-    results = run(0, 10, 1000)
+    results = run(0, 100, 1000)
     pareto_front(results)
