@@ -1,57 +1,31 @@
-import numpy as np
+import time
+import warnings
 import matplotlib.pyplot as plt
-from paretoset import paretoset
-from model import *
+from comp import *
 
-def pareto_front(results):
+if __name__ == "__main__":
+    start_time = time.time()
+    runs = int(input("\nNumber of runs: "))
+    print("\n")
+    warnings.filterwarnings("ignore")
 
-    if circuit == "neg":
-        S_alpha_vals = [r['S_alpha'] for r in results]
-        S_n_vals = [r['S_n'] for r in results]
-        S_alpha_vals = np.array(S_alpha_vals)
-        S_n_vals = np.array(S_n_vals)
-        mask = paretoset(np.column_stack((S_alpha_vals, S_n_vals)), sense=['min', 'min'])
-        pareto_front = np.column_stack((S_alpha_vals[mask], S_n_vals[mask]))
-
-    elif circuit == "posneg":
-        S_sens1_vals = [r[f'{labels[choice1]}'] for r in results]
-        S_sens2_vals = [r[f'{labels[choice2]}'] for r in results]
-        S_sens1_vals = np.array(S_sens1_vals)
-        S_sens2_vals = np.array(S_sens2_vals)
-        mask = paretoset(np.column_stack((S_sens1_vals, S_sens2_vals)), sense=['min', 'min'])
-        pareto_front = np.column_stack((S_sens1_vals[mask], S_sens2_vals[mask]))
-
-    else:
-        f1 = [r['f1'] for r in results]
-        f2 = [r['f2'] for r in results]
-        f1 = np.array(f1)
-        f2 = np.array(f2)
-        mask = paretoset(np.column_stack((f1, f2)), sense=['min', 'min'])
-        pareto_front = np.column_stack((f1[mask], f2[mask]))
+    pareto_front = custom_run(runs=runs)
+    
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time} seconds")
 
     plt.figure(figsize=(10, 6))
     plt.scatter(pareto_front[:, 0], pareto_front[:, 1])
 
-    if circuit == "neg":
+    if circuit == 'neg':
         plt.xlabel('S_alpha')
         plt.ylabel('S_n')
 
-    elif circuit == "posneg":
-        plt.xlabel(f'{labels[choice1]}')
-        plt.ylabel(f'{labels[choice2]}')
-    
-    else:
-        plt.xlabel('f1')
-        plt.ylabel('f2')
+    elif circuit == 'posneg':
+        plt.xlabel(labels[choice1])
+        plt.ylabel(labels[choice2])
 
-    plt.title('Pareto Front')
+    plt.title(f'Custom MOSA Driver - {runs} Runs')
     plt.grid(True)
+    plt.legend()
     plt.show()
-
-# def params_space():
-
-
-
-if __name__ == "__main__":
-    results = run(0, 100, 1000)
-    pareto_front(results)
