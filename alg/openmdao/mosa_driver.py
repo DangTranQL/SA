@@ -1,5 +1,5 @@
 import random
-# from tqdm import tqdm
+from tqdm import tqdm
 import numpy as np
 from openmdao.core.driver import Driver
 
@@ -7,10 +7,10 @@ class MOSADriver(Driver):
     def __init__(self, params):
         super().__init__()
         self.num_iterations = 500
-        self.initial_temp = 100.0
-        self.final_temp = 1e-6
+        self.initial_temp = 500.0
+        self.num_temps = 100
         self.cooling_rate = 0.95
-        self.step_size = 0.1
+        self.step_size = 0.01
         self.pareto_front = []
         self.params = params
 
@@ -18,7 +18,7 @@ class MOSADriver(Driver):
         pass
 
     def run(self, outer_pbar=None):
-        temp = self.initial_temp
+        temps = [self.initial_temp * (self.cooling_rate ** i) for i in range(self.num_temps)]
 
         vars_bound = []
         vars_current = []
@@ -38,32 +38,32 @@ class MOSADriver(Driver):
             'f': f_current.copy()
         }]
 
-        # with tqdm(total=self.num_iterations, desc="Iterations", leave=False, position=1) as inner_pbar:
-        for _ in range(self.num_iterations):
-            vars_new = [np.clip(vars_current[i] + random.uniform(-self.step_size, self.step_size), *vars_bound[i]) for i in range(len(self.params))]
+        with tqdm(total=len(temps), desc="Temps", leave=False, position=1) as inner_pbar:
+            for temp in temps:
+                with tqdm(total=self.num_iterations, desc="Iterations", leave=False, position=2) as iter_pbar:
+                    for _ in range(self.num_iterations):
+                        vars_new = [np.clip(vars_current[i] + random.uniform(-self.step_size, self.step_size), *vars_bound[i]) for i in range(len(self.params))]
 
-            for i, param in enumerate(self.params):
-                prob.set_val(param, vars_new[i])
-            prob.run_model()
+                        for i, param in enumerate(self.params):
+                            prob.set_val(param, vars_new[i])
+                        prob.run_model()
 
-            f_new = self.get_objective_values()
+                        f_new = self.get_objective_values()
 
-            delta_f = np.sum([f_new[k] - f_current[k] for k in f_new])
-            accept = delta_f < 0 or np.exp(-delta_f / temp) > random.random()
-            if accept:
-                for i, param in enumerate(self.params):
-                    vars_current[i] = vars_new[i]
-                f_current = f_new.copy()
+                        delta_f = np.sum([f_new[k] - f_current[k] for k in f_new])
+                        accept = delta_f < 0 or np.exp(-delta_f / temp) > random.random()
+                        if accept:
+                            for i, param in enumerate(self.params):
+                                vars_current[i] = vars_new[i]
+                            f_current = f_new.copy()
 
-            pareto = self._update_pareto(
-                pareto,
-                {self.params[i]: vars_new[i] for i in range(len(self.params))},
-                f_new.copy()
-            )
-
-            temp = max(temp * self.cooling_rate, self.final_temp)
-
-                # inner_pbar.update(1)
+                        pareto = self._update_pareto(
+                            pareto,
+                            {self.params[i]: vars_new[i] for i in range(len(self.params))},
+                            f_new.copy()
+                        )
+                        iter_pbar.update(1)
+                inner_pbar.update(1)
 
         self.pareto_front = pareto
         return True
