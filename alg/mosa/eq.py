@@ -49,9 +49,11 @@ if circuit == 'neg':
         # If no valid solutions are found after trying all initial guesses
         return float('nan')
     
-    def compute(alpha_val, n_val):
-        xss = ssfinder(alpha_val, n_val)
-        return S_alpha_xss_analytic(xss, alpha_val, n_val), S_n_xss_analytic(xss, alpha_val, n_val)
+    def compute(params):
+        xss = ssfinder(params[0], params[1])
+        if np.isnan(xss):
+            return {"S_alpha": 1e6, "S_n": 1e6}
+        return {"S_alpha": S_alpha_xss_analytic(xss, params[0], params[1]), "S_n": S_n_xss_analytic(xss, params[0], params[1])}
 
 elif circuit == 'posneg':
 
@@ -96,26 +98,6 @@ elif circuit == 'posneg':
     # DEFINE FUNCTION THAT RETURNS PAIR OF SENSITIVITIES
     def senpair(xss_list, yss_list, beta_x_list, beta_y_list, n_list, choice1, choice2):
 
-        # # Evaluate sensitivities
-        # S_betax_xss = S_betax_xss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-        # S_betax_yss = S_betax_yss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-        # S_betay_xss = S_betay_xss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-        # S_betay_yss = S_betay_yss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-        # S_n_xss     =     S_n_xss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-        # S_n_yss     =     S_n_yss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list)
-
-        # # Sensitivity dictionary
-        # sensitivities = {
-        #     "S_betax_xss": S_betax_xss,
-        #     "S_betax_yss": S_betax_yss,
-        #     "S_betay_xss": S_betay_xss,
-        #     "S_betay_yss": S_betay_yss,
-        #     "S_n_xss": S_n_xss,
-        #     "S_n_yss": S_n_yss}
-        
-        # # Return values of the two sensitivities of interest
-        # return sensitivities[labels[choice1]], sensitivities[labels[choice2]]
-
         sensitivity_funcs = {
             "S_betax_xss": lambda: S_betax_xss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list),
             "S_betax_yss": lambda: S_betax_yss_analytic(xss_list, yss_list, beta_x_list, beta_y_list, n_list),
@@ -128,8 +110,8 @@ elif circuit == 'posneg':
         result1 = sensitivity_funcs[labels[choice1]]()
         result2 = sensitivity_funcs[labels[choice2]]()
 
-        return result1, result2
-    
+        return {labels[choice1]: result1, labels[choice2]: result2}
+
     def ssfinder(beta_x_val,beta_y_val,n_val):
 
         # If we have one steady state
@@ -162,7 +144,9 @@ elif circuit == 'posneg':
                 
             # If no valid solutions are found after trying all initial guesses
             return float('nan'), float('nan')
-        
-    def compute(beta_x_val, beta_y_val, n_val):
-        xss, yss = ssfinder(beta_x_val, beta_y_val, n_val)
-        return senpair(xss, yss, beta_x_val, beta_y_val, n_val, choice1, choice2)
+
+    def compute(params):
+        xss, yss = ssfinder(params[0], params[1], params[2])
+        if np.isnan(xss) or np.isnan(yss):
+            return {labels[choice1]: 1e6, labels[choice2]: 1e6}
+        return senpair(xss, yss, params[0], params[1], params[2], choice1, choice2)
