@@ -25,7 +25,13 @@ def run(runs=200):
         bounds = {'beta_x': (0.01, 50), 'beta_y': (0.01, 50), 'n': (0.01, 10)}
         objectives = compute
 
-    
+        # num_n = 10
+        # num_beta_x = 5*num_n
+        # num_beta_y = 5*num_n
+        # choices_n = np.linspace(bounds['n'][0]+0.05, bounds['n'][1]-0.05, num_n)
+        # choices_beta_x = np.linspace(bounds['beta_x'][0]+0.05, bounds['beta_x'][1]-0.05, num_beta_x)
+        # choices_beta_y = np.linspace(bounds['beta_y'][0]+0.05, bounds['beta_y'][1]-0.05, num_beta_y)
+        # pairs = list(product(choices_beta_x, choices_beta_y, choices_n))
 
     with tqdm(total=runs, desc="Runs", position=0) as outer_pbar:
         for _ in range(runs):
