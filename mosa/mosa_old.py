@@ -47,27 +47,20 @@ class custom_mosa():
                 pmax = 0
                 last_percent = 0
 
-                vars_curr_list = [{key: np.random.uniform(*self.bounds[key]) for key in self.param_names} for _ in range(1000)]
-                f_curr_list = [self.objectives([vars_curr_list[i][param] for param in self.param_names]) for i in range(1000)]
-                self.pareto_front = [{'vars': {self.param_names[i]: vars_curr_list[j][self.param_names[i]] for i in range(len(self.param_names))}, 'f': f_curr_list[j].copy()} for j in range(1000)]
-
                 with bar(total=100, desc="Temperatures", unit='%', leave=False, position=1) as iter_pbar:
                     while temp >= self.final_temp:
 
                         with bar(total=self.num_iterations, desc="Iterations", leave=False, position=2) as iter_pbar_2:
-                            for i in range(self.num_iterations):
+                            for _ in range(self.num_iterations):
                                 gamma = 1
 
-                                vars_curr = self.pareto_front[i]['vars']
-                                f_curr = self.pareto_front[i]['f']
+                                vars_curr = {key: np.random.uniform(*self.bounds[key]) for key in self.param_names}
+                                f_curr = self.objectives([vars_curr[param] for param in self.param_names])
 
-                                # vars_curr = {key: np.random.uniform(*self.bounds[key]) for key in self.param_names}
-                                # f_curr = self.objectives([vars_curr[param] for param in self.param_names])
-
-                                # self.pareto_front.append({
-                                #     'vars': {self.param_names[i]: vars_curr[self.param_names[i]] for i in range(len(self.param_names))},
-                                #     'f': f_curr.copy()
-                                # })
+                                self.pareto_front.append({
+                                    'vars': {self.param_names[i]: vars_curr[self.param_names[i]] for i in range(len(self.param_names))},
+                                    'f': f_curr.copy()
+                                })
 
                                 vars_new = {key: np.clip(vars_curr[key] + np.random.uniform(-self.step_size, self.step_size), *self.bounds[key]) for i, key in enumerate(self.param_names)}
                                 f_new = self.objectives([vars_new[param] for param in self.param_names])
@@ -84,17 +77,13 @@ class custom_mosa():
                                 gamma = self.alpha * pmax + (1 - self.alpha) * gamma
 
                                 if gamma == 1 or gamma > random.random():
-                                    # vars_curr = vars_new
-                                    # f_curr = f_new.copy()
+                                    vars_curr = vars_new
+                                    f_curr = f_new.copy()
 
-                                    # self.pareto_front.append({
-                                    #     'vars': {self.param_names[i]: vars_new[self.param_names[i]] for i in range(len(self.param_names))},
-                                    #     'f': f_new.copy()
-                                    # })
-                                    self.pareto_front[i] = {
+                                    self.pareto_front.append({
                                         'vars': {self.param_names[i]: vars_new[self.param_names[i]] for i in range(len(self.param_names))},
                                         'f': f_new.copy()
-                                    }
+                                    })
 
                                 iter_pbar_2.update(1)
                         
