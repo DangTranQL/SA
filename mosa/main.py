@@ -14,7 +14,7 @@ if __name__ == "__main__":
         func_names = [labels[choice1], labels[choice2]]
         bounds = {'beta_x': (0.01, 50), 'beta_y': (0.01, 50), 'n': (0.01, 10)}
         objectives = compute
-        data = np.load('data/PositiveNegative_SensitivityPairsParetos.npz')[f'paretoset_SensPair_{choice1}_{choice2}']
+        data = np.load('data/PosNegFbGridSearchData_renamed.npz')[f'paretoset_SensPair_{choice1}_{choice2}']
 
     mosa = custom_mosa()
     mosa.setup(param_names=param_names, bounds=bounds, func_names=func_names, objectives=compute, alpha=0.5)
