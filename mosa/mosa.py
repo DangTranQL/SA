@@ -8,6 +8,10 @@ from pymoo.indicators.gd import GD
 from pymoo.indicators.igd import IGD
 import warnings
 
+# NEW: space-filling & distance tools
+from scipy.stats import qmc
+from sklearn.neighbors import KDTree
+
 warnings.filterwarnings("ignore")
 
 @contextmanager
@@ -32,109 +36,203 @@ class custom_mosa():
         self.objectives = objectives
         self.alpha = alpha
 
-        self.pareto_front = []
+        # archives for unpruned
         self.func_1 = []
         self.func_2 = []
         self.params = {key: [] for key in self.param_names}
 
-    def run(self, runs=1, use_tqdm=True):
-        f1_list, f2_list = [], []
+        # pruned (set by prune())
+        self.pareto_front = None
+        self.param_space = None
+
+    # =========================
+    # Helpers (private methods)
+    # =========================
+    def _bounds_arrays(self):
+        names = list(self.param_names)
+        lows  = np.array([self.bounds[k][0] for k in names], float)
+        highs = np.array([self.bounds[k][1] for k in names], float)
+        return names, lows, highs
+
+    def _dicts_from_X(self, X):
+        # rows of X -> list of dicts using self.param_names ordering
+        return [dict(zip(self.param_names, row)) for row in X]
+
+    def _evaluate_batch(self, X):
+        # Evaluate objectives for matrix X (n, d) -> (n,2) float array
+        batch = self._dicts_from_X(X)
+        F = []
+        for b in batch:
+            f = self.objectives([b[p] for p in self.param_names])  # expects dict
+            F.append([f[self.func_names[0]], f[self.func_names[1]]])
+        return np.asarray(F, float)
+
+    def _sobol_batch(self, n):
+        # Owen-scrambled Sobol, scaled to bounds
+        names, lows, highs = self._bounds_arrays()
+        d = len(names)
+        eng = qmc.Sobol(d, scramble=True)
+        m = int(np.ceil(np.log2(max(2, n))))
+        X01 = eng.random_base2(m)[:n]
+        return qmc.scale(X01, lows, highs)
+
+    def _farthest_points(self, n, X_existing, cand_mult=20000):
+        # Sample many Sobol candidates, pick those farthest from existing archive
+        names, lows, highs = self._bounds_arrays()
+        d = len(names)
+        eng = qmc.Sobol(d, scramble=True)
+        m = int(np.ceil(np.log2(max(2, cand_mult))))
+        C = qmc.scale(eng.random_base2(m)[:cand_mult], lows, highs)
+
+        if X_existing is None or len(X_existing) == 0:
+            return C[:n]
+
+        tree = KDTree(X_existing)
+        dmin, _ = tree.query(C, k=1)
+        idx = np.argsort(dmin.ravel())[::-1][:n]
+        return C[idx]
+
+    def _local_refinement(self, n, X_pareto, weights, step=0.05):
+        # Gaussian jitter around Pareto points; weights ~ crowding distance
+        names, lows, highs = self._bounds_arrays()
+        if X_pareto is None or len(X_pareto) == 0:
+            return self._sobol_batch(n)
+
+        rng = np.random.default_rng()
+        w = np.asarray(weights, float)
+        w = w / (w.sum() + 1e-12)
+        idx = rng.choice(len(X_pareto), size=n, p=w)
+        centers = X_pareto[idx]
+        sigma = step * (highs - lows)
+        X = rng.normal(loc=centers, scale=sigma)
+        return np.clip(X, lows, highs)
+
+    def _nondominated_mask(self, F):
+        # Fast non-dominated mask in 2D (minimization)
+        n = F.shape[0]
+        order = np.argsort(F[:, 0], kind='mergesort')  # stable tie-break
+        F_sorted = F[order]
+        mask_sorted = np.ones(n, dtype=bool)
+        best_f2 = np.inf
+        for i in range(n):
+            f2 = F_sorted[i, 1]
+            if f2 < best_f2 - 1e-15:
+                best_f2 = f2
+            else:
+                mask_sorted[i] = False
+        mask = np.zeros(n, dtype=bool)
+        mask[order] = mask_sorted
+        return mask
+
+    def _crowding_distance(self, F_front):
+        # Standard crowding distance for 2D (finite, positive)
+        n = len(F_front)
+        if n == 0:
+            return np.array([])
+        if n == 1:
+            return np.array([1.0])
+        D = np.zeros(n, float)
+        for k in range(F_front.shape[1]):
+            idx = np.argsort(F_front[:, k])
+            D[idx[0]] = D[idx[-1]] = np.inf
+            f = F_front[idx, k]
+            fmin, fmax = f[0], f[-1]
+            denom = (fmax - fmin) if fmax > fmin else 1.0
+            for i in range(1, n - 1):
+                D[idx[i]] += (f[i + 1] - f[i - 1]) / denom
+        # replace inf with large finite for weighting
+        inf_mask = ~np.isfinite(D)
+        if inf_mask.any():
+            finite_max = np.max(D[~inf_mask]) if (~inf_mask).any() else 1.0
+            D[inf_mask] = 10.0 * max(1.0, finite_max)
+        return np.maximum(D, 1e-12)
+
+    def _apply_badmask(self, F, X):
+        # Drop rows with sentinel or non-finite values
+        bad = (F[:, 0] == 1e6) | (F[:, 1] == 1e6) | ~np.isfinite(F).all(axis=1)
+        return F[~bad], X[~bad]
+
+    # =========================
+    # NEW: adaptive, space-filling runner
+    # =========================
+    def run_adaptive(self, runs=3, batch_size=1000, explore_frac=0.5, use_tqdm=True, refine_step=0.05):
+        """
+        Batch-iterative sampling:
+          - Run 0: Sobol (space-filling) batch
+          - Later runs: explore (farthest) + exploit (local refinement around Pareto)
+        Keeps self.func_1, self.func_2, self.params aligned for your plotting & pruning.
+        """
         bar = tqdm if use_tqdm else dummy_tqdm
-        
-        with bar(total=runs, desc="Runs", position=0) as outer_pbar:
-            for _ in range(runs):
-                temp = self.initial_temp
-                pmax = 0
-                last_percent = 0
 
-                vars_curr_list = [{key: np.random.uniform(*self.bounds[key]) for key in self.param_names} for _ in range(1000)]
-                f_curr_list = [self.objectives([vars_curr_list[i][param] for param in self.param_names]) for i in range(1000)]
-                self.pareto_front = [{'vars': {self.param_names[i]: vars_curr_list[j][self.param_names[i]] for i in range(len(self.param_names))}, 'f': f_curr_list[j].copy()} for j in range(1000)]
+        # reset archives
+        self.func_1 = []
+        self.func_2 = []
+        self.params = {key: [] for key in self.param_names}
 
-                with bar(total=100, desc="Temperatures", unit='%', leave=False, position=1) as iter_pbar:
-                    while temp >= self.final_temp:
+        X_all = np.empty((0, len(self.param_names)), float)
+        F_all = np.empty((0, 2), float)
 
-                        with bar(total=self.num_iterations, desc="Iterations", leave=False, position=2) as iter_pbar_2:
-                            for i in range(self.num_iterations):
-                                gamma = 1
+        with bar(total=runs, desc="Runs", position=0) as outer:
+            for r in range(runs):
+                if r == 0:
+                    X = self._sobol_batch(batch_size)
+                else:
+                    # current Pareto from archive
+                    mask_nd = self._nondominated_mask(F_all)
+                    X_pareto = X_all[mask_nd]
+                    F_pareto = F_all[mask_nd]
+                    cd = self._crowding_distance(F_pareto)
 
-                                vars_curr = self.pareto_front[i]['vars']
-                                f_curr = self.pareto_front[i]['f']
+                    n_explore = int(round(batch_size * explore_frac))
+                    n_exploit = batch_size - n_explore
 
-                                # vars_curr = {key: np.random.uniform(*self.bounds[key]) for key in self.param_names}
-                                # f_curr = self.objectives([vars_curr[param] for param in self.param_names])
+                    X_exp  = self._farthest_points(n_explore, X_all, cand_mult=max(20000, 20 * batch_size))
+                    X_expl = self._local_refinement(n_exploit, X_pareto, cd, step=refine_step)
+                    X = np.vstack([X_exp, X_expl])
 
-                                # self.pareto_front.append({
-                                #     'vars': {self.param_names[i]: vars_curr[self.param_names[i]] for i in range(len(self.param_names))},
-                                #     'f': f_curr.copy()
-                                # })
+                # evaluate
+                F = self._evaluate_batch(X)
+                F, X = self._apply_badmask(F, X)  # drop 1e6/non-finite rows
 
-                                vars_new = {key: np.clip(vars_curr[key] + np.random.uniform(-self.step_size, self.step_size), *self.bounds[key]) for i, key in enumerate(self.param_names)}
-                                f_new = self.objectives([vars_new[param] for param in self.param_names])
+                # merge into archives
+                X_all = np.vstack([X_all, X]) if len(X_all) else X
+                F_all = np.vstack([F_all, F]) if len(F_all) else F
 
-                                for key in f_new:
-                                    if f_new[key] < f_curr[key]:
-                                        pmax = p = 1
-                                    else:
-                                        p = np.exp(-(f_new[key] - f_curr[key]) / temp)
-                                        if pmax < p:
-                                            pmax = p    
-                                    gamma *= p
+                outer.update(1)
 
-                                gamma = self.alpha * pmax + (1 - self.alpha) * gamma
+        # finalize class fields
+        self.func_1 = F_all[:, 0].astype(float)
+        self.func_2 = F_all[:, 1].astype(float)
+        for j, name in enumerate(self.param_names):
+            self.params[name] = X_all[:, j].tolist()
 
-                                if gamma == 1 or gamma > random.random():
-                                    # vars_curr = vars_new
-                                    # f_curr = f_new.copy()
-
-                                    # self.pareto_front.append({
-                                    #     'vars': {self.param_names[i]: vars_new[self.param_names[i]] for i in range(len(self.param_names))},
-                                    #     'f': f_new.copy()
-                                    # })
-                                    self.pareto_front[i] = {
-                                        'vars': {self.param_names[i]: vars_new[self.param_names[i]] for i in range(len(self.param_names))},
-                                        'f': f_new.copy()
-                                    }
-
-                                iter_pbar_2.update(1)
-                        
-                        temp *= self.cooling_rate
-
-                        percent_complete = (self.initial_temp - temp) / (self.initial_temp - self.final_temp) * 100
-                        iter_pbar.update(percent_complete - last_percent)
-                        last_percent = percent_complete
-
-                f1_list.extend(d["f"][self.func_names[0]] for d in self.pareto_front)
-                f2_list.extend(d["f"][self.func_names[1]] for d in self.pareto_front)
-
-                for key in self.param_names:
-                    self.params[key].extend(d["vars"][key] for d in self.pareto_front)
-
-                self.pareto_front = []
-                outer_pbar.update(1)
-
-        self.func_1 = np.asarray(f1_list, dtype=float)
-        self.func_2 = np.asarray(f2_list, dtype=float)
-
+    # =========================
+    # PRUNING & PLOTTING
+    # =========================
     def prune(self):
-        mask = paretoset(np.column_stack((self.func_1, self.func_2)), sense=['min', 'min'])
+        # compute non-dominated set from unpruned archives
+        F = np.column_stack((np.asarray(self.func_1, float), np.asarray(self.func_2, float)))
+        mask = paretoset(F, sense=['min', 'min'])
 
-        self.param_space = np.column_stack([np.array(v)[mask] for v in self.params.values()])
-        self.pareto_front = np.column_stack((self.func_1[mask], self.func_2[mask]))
+        # pruned arrays, shape (k, d) and (k, 2)
+        self.param_space = np.column_stack([np.asarray(self.params[k], float)[mask] for k in self.param_names])
+        self.pareto_front = F[mask]
 
-    def plot(self):
+    def pruned_plot(self):
+        if self.pareto_front is None or self.param_space is None:
+            raise RuntimeError("Call prune() before pruned_plot().")
+
         fig = plt.figure(figsize=(20, 10))
         ax2d = fig.add_subplot(1, 2, 1)
-
         ax2d.scatter(self.pareto_front[:, 0], self.pareto_front[:, 1])
-        ax2d.set_title("Pareto Plot")
+        ax2d.set_title("Pruned Objectives")
         ax2d.set_xlabel(self.func_names[0])
         ax2d.set_ylabel(self.func_names[1])
 
         if len(self.param_names) == 2:
             ax2d2 = fig.add_subplot(1, 2, 2)
             ax2d2.scatter(self.param_space[:, 0], self.param_space[:, 1])
-            ax2d2.set_title("Parameter Space")
+            ax2d2.set_title("Pruned Parameter Space")
             ax2d2.set_xlabel(self.param_names[0])
             ax2d2.set_ylabel(self.param_names[1])
         else:
@@ -143,8 +241,98 @@ class custom_mosa():
             ax_3d.set_xlabel(self.param_names[0])
             ax_3d.set_ylabel(self.param_names[1])
             ax_3d.set_zlabel(self.param_names[2])
+            ax_3d.set_title("Pruned Parameter Space")
             ax_3d.grid(True)
             ax_3d.set_box_aspect([1, 1, 1])
+
+        plt.tight_layout()
+        plt.show()
+
+    def unpruned_plot(self):
+        if len(self.func_1) == 0:
+            raise RuntimeError("No data to plot. Run run() or run_adaptive() first.")
+
+        fig = plt.figure(figsize=(20, 10))
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax1.scatter(self.func_1, self.func_2)
+        ax1.set_xlabel(self.func_names[0])
+        ax1.set_ylabel(self.func_names[1])
+        ax1.set_title("Unpruned Objectives")
+
+        if len(self.param_names) == 2:
+            ax2 = fig.add_subplot(1, 2, 2)
+            ax2.scatter(self.params[self.param_names[0]], self.params[self.param_names[1]])
+            ax2.set_title("Unpruned Parameter Space")
+            ax2.set_xlabel(self.param_names[0])
+            ax2.set_ylabel(self.param_names[1])
+        else:
+            ax2_3d = fig.add_subplot(1, 2, 2, projection='3d')
+            ax2_3d.scatter(self.params[self.param_names[0]], self.params[self.param_names[1]], self.params[self.param_names[2]])
+            ax2_3d.set_xlabel(self.param_names[0])
+            ax2_3d.set_ylabel(self.param_names[1])
+            ax2_3d.set_zlabel(self.param_names[2])
+            ax2_3d.set_title("Unpruned Parameter Space")
+            ax2_3d.grid(True)
+            ax2_3d.set_box_aspect([1, 1, 1])
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot(self):
+        if self.pareto_front is None or self.param_space is None:
+            raise RuntimeError("Call prune() before plot().")
+
+        fig = plt.figure(figsize=(20, 20))
+
+        # === Top row: Unpruned ===
+        ax1 = fig.add_subplot(2, 2, 1)
+        ax1.scatter(self.func_1, self.func_2)
+        ax1.set_xlabel(self.func_names[0])
+        ax1.set_ylabel(self.func_names[1])
+        ax1.set_title("Unpruned Objectives")
+
+        if len(self.param_names) == 2:
+            ax2 = fig.add_subplot(2, 2, 2)
+            ax2.scatter(self.params[self.param_names[0]], self.params[self.param_names[1]])
+            ax2.set_xlabel(self.param_names[0])
+            ax2.set_ylabel(self.param_names[1])
+            ax2.set_title("Unpruned Parameter Space")
+        else:
+            ax2 = fig.add_subplot(2, 2, 2, projection='3d')
+            ax2.scatter(self.params[self.param_names[0]],
+                        self.params[self.param_names[1]],
+                        self.params[self.param_names[2]])
+            ax2.set_xlabel(self.param_names[0])
+            ax2.set_ylabel(self.param_names[1])
+            ax2.set_zlabel(self.param_names[2])
+            ax2.set_title("Unpruned Parameter Space")
+            ax2.grid(True)
+            ax2.set_box_aspect([1, 1, 1])
+
+        # === Bottom row: Pruned (Pareto) ===
+        ax3 = fig.add_subplot(2, 2, 3)
+        ax3.scatter(self.pareto_front[:, 0], self.pareto_front[:, 1])
+        ax3.set_xlabel(self.func_names[0])
+        ax3.set_ylabel(self.func_names[1])
+        ax3.set_title("Pruned Objectives")
+
+        if len(self.param_names) == 2:
+            ax4 = fig.add_subplot(2, 2, 4)
+            ax4.scatter(self.param_space[:, 0], self.param_space[:, 1])
+            ax4.set_xlabel(self.param_names[0])
+            ax4.set_ylabel(self.param_names[1])
+            ax4.set_title("Pruned Parameter Space")
+        else:
+            ax4 = fig.add_subplot(2, 2, 4, projection='3d')
+            ax4.scatter(self.param_space[:, 0],
+                        self.param_space[:, 1],
+                        self.param_space[:, 2])
+            ax4.set_xlabel(self.param_names[0])
+            ax4.set_ylabel(self.param_names[1])
+            ax4.set_zlabel(self.param_names[2])
+            ax4.set_title("Pruned Parameter Space")
+            ax4.grid(True)
+            ax4.set_box_aspect([1, 1, 1])
 
         plt.tight_layout()
         plt.show()
