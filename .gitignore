@@ -205,3 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_F_NSGA-II_1000.npy
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_F_NSGA-II_2000.npy
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_F_NSGA-II_5000.npy
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_Pareto_front_and_X_NSGA-II_1000.npz
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_Pareto_front_and_X_NSGA-II_2000.npz
+Genetic Algorithms for Multi-Objective Optimization/Arrays for Generational Distance calculation/PosNeg_Pareto_front_and_X_NSGA-II_5000.npz
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_and_X_EPOSolver-1000.npz
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_and_X_EPOSolver-2000.npz
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_and_X_EPOSolver-5000.npz
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_Y_EPOSolver-1000.npy
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_Y_EPOSolver-2000.npy
+Gradient Descent for Multi-Objective Optimization/Negative Autoregulation/libmoon_main/SensitivityPareto_front_Y_EPOSolver-5000.npy
