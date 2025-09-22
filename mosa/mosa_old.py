@@ -17,7 +17,7 @@ def dummy_tqdm(*args, **kwargs):
         def close(self): pass
     yield Dummy()
 
-class custom_mosa():
+class custom_mosa_old():
     def __init__(self, initial_temp=1000, final_temp=0.001, cooling_rate=0.95, num_iterations=1000, step_size=0.1):
         self.initial_temp = initial_temp
         self.final_temp = final_temp
@@ -25,7 +25,10 @@ class custom_mosa():
         self.num_iterations = num_iterations
         self.step_size = step_size
 
-    def setup(self, param_names, bounds, func_names, objectives, alpha):
+    def setup(self, circuit, choice1, choice2, param_names, bounds, func_names, objectives, alpha):
+        self.circuit = circuit
+        self.choice1 = choice1
+        self.choice2 = choice2
         self.param_names = param_names
         self.bounds = bounds
         self.func_names = func_names
@@ -36,8 +39,10 @@ class custom_mosa():
         self.func_1 = []
         self.func_2 = []
         self.params = {key: [] for key in self.param_names}
+        self.gd = None
+        self.igd = None
 
-    def run(self, runs=1, use_tqdm=True):
+    def run(self, runs=1, use_tqdm=False):
         bar = tqdm if use_tqdm else dummy_tqdm
         
         with bar(total=runs, desc="Runs", position=0) as outer_pbar:
@@ -47,7 +52,7 @@ class custom_mosa():
                 last_percent = 0
 
                 vars_curr_list = [{key: np.random.uniform(*self.bounds[key]) for key in self.param_names} for _ in range(1000)]
-                f_curr_list = [self.objectives([vars_curr_list[i][param] for param in self.param_names]) for i in range(1000)]
+                f_curr_list = [self.objectives([vars_curr_list[i][param] for param in self.param_names], self.choice1, self.choice2) for i in range(1000)]
                 self.pareto_front = [{'vars': {self.param_names[i]: vars_curr_list[j][self.param_names[i]] for i in range(len(self.param_names))}, 'f': f_curr_list[j].copy()} for j in range(1000)]
 
                 with bar(total=100, desc="Temperatures", unit='%', leave=False, position=1) as iter_pbar:
@@ -61,7 +66,7 @@ class custom_mosa():
                                 f_curr = self.pareto_front[i]['f']
 
                                 vars_new = {key: np.clip(vars_curr[key] + np.random.uniform(-self.step_size, self.step_size), *self.bounds[key]) for i, key in enumerate(self.param_names)}
-                                f_new = self.objectives([vars_new[param] for param in self.param_names])
+                                f_new = self.objectives([vars_new[param] for param in self.param_names], self.choice1, self.choice2)
 
                                 for key in f_new:
                                     if f_new[key] < f_curr[key]:
@@ -168,7 +173,7 @@ class custom_mosa():
         plt.tight_layout()
         plt.show()
 
-    def plot(self):
+    def plot(self, time):
         fig = plt.figure(figsize=(20, 20))
 
         # === Top row: Unpruned ===
@@ -221,9 +226,19 @@ class custom_mosa():
             ax4.grid(True)
             ax4.set_box_aspect([1, 1, 1])
 
-        plt.tight_layout()
-        plt.show()
+        comment_text = f'GD = {self.gd}, IGD = {self.igd}\n Running Time = {time}'
+        fig.text(0.5, 0.02, comment_text, ha='center', va='bottom', fontsize=14, wrap=True)
+
+        # Adjust layout to prevent text from overlapping with the plot
+        plt.tight_layout(rect=[0, 0.05, 1, 1])
+
+        if self.circuit == 'posneg':
+            plt.savefig(f'out/random_{self.circuit}_{self.choice1}{self.choice2}.jpg')
+        else:
+            plt.savefig(f'out/random_{self.circuit}.jpg')
 
     def gd_igd(self, ref):
-        ind = GD(ref)
-        print("\nGeneration Distance = ", ind(self.pareto_front))
+        gd = GD(ref)
+        igd = IGD(ref)
+        self.gd = gd(self.pareto_front)
+        self.igd = igd(self.pareto_front)

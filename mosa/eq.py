@@ -3,7 +3,8 @@ from scipy.optimize import fsolve
 import importlib
 
 # Choose circuit
-circuit = input("Please enter name of the circuit: ")
+# circuit = input("Please enter name of the circuit: ")
+circuit = 'posneg'
 
 if circuit != "neg" and circuit != "posneg":
     raise NameError(f'{circuit} is not supported')
@@ -58,9 +59,10 @@ if circuit == 'neg':
 elif circuit == 'posneg':
 
     # Define number of steady states expected
-    numss = int(input("""
-    Do you expect 1 or 2 stable steady states in your search space? 
-    Please enter either 1 or 2: """))
+    # numss = int(input("""
+    # Do you expect 1 or 2 stable steady states in your search space? 
+    # Please enter either 1 or 2: """))
+    numss = 1
 
     # dx/dt
     Equ1 = config.Equ1
@@ -83,8 +85,8 @@ elif circuit == 'posneg':
     5. S_n_yss\n''')
 
     # Choose pair of functions
-    choice1 = int(input("Please select first option number: "))
-    choice2 = int(input("Please select second option number: "))
+    # choice1 = int(input("Please select first option number: "))
+    # choice2 = int(input("Please select second option number: "))
 
     # Map indices to keys
     labels = {
@@ -145,7 +147,7 @@ elif circuit == 'posneg':
             # If no valid solutions are found after trying all initial guesses
             return float('nan'), float('nan')
 
-    def compute(params):
+    def compute(params, choice1, choice2):
         xss, yss = ssfinder(params[0], params[1], params[2])
         if np.isnan(xss) or np.isnan(yss):
             return {labels[choice1]: 1e6, labels[choice2]: 1e6}

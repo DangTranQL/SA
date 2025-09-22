@@ -1,3 +1,5 @@
+from scipy.stats import qmc
+from sklearn.neighbors import KDTree
 import numpy as np
 from tqdm import tqdm
 import random
@@ -7,10 +9,6 @@ import matplotlib.pyplot as plt
 from pymoo.indicators.gd import GD
 from pymoo.indicators.igd import IGD
 import warnings
-
-# NEW: space-filling & distance tools
-from scipy.stats import qmc
-from sklearn.neighbors import KDTree
 
 warnings.filterwarnings("ignore")
 
@@ -29,7 +27,10 @@ class custom_mosa():
         self.num_iterations = num_iterations
         self.step_size = step_size
 
-    def setup(self, param_names, bounds, func_names, objectives, alpha):
+    def setup(self, circuit, choice1, choice2, param_names, bounds, func_names, objectives, alpha=0.5):
+        self.circuit = circuit
+        self.choice1 = choice1
+        self.choice2 = choice2
         self.param_names = param_names
         self.bounds = bounds
         self.func_names = func_names
@@ -44,31 +45,16 @@ class custom_mosa():
         # pruned (set by prune())
         self.pareto_front = None
         self.param_space = None
-
-    # =========================
-    # Helpers (private methods)
-    # =========================
+        self.gd = None
+        self.igd = None
+    
     def _bounds_arrays(self):
         names = list(self.param_names)
         lows  = np.array([self.bounds[k][0] for k in names], float)
         highs = np.array([self.bounds[k][1] for k in names], float)
         return names, lows, highs
 
-    def _dicts_from_X(self, X):
-        # rows of X -> list of dicts using self.param_names ordering
-        return [dict(zip(self.param_names, row)) for row in X]
-
-    def _evaluate_batch(self, X):
-        # Evaluate objectives for matrix X (n, d) -> (n,2) float array
-        batch = self._dicts_from_X(X)
-        F = []
-        for b in batch:
-            f = self.objectives([b[p] for p in self.param_names])  # expects dict
-            F.append([f[self.func_names[0]], f[self.func_names[1]]])
-        return np.asarray(F, float)
-
     def _sobol_batch(self, n):
-        # Owen-scrambled Sobol, scaled to bounds
         names, lows, highs = self._bounds_arrays()
         d = len(names)
         eng = qmc.Sobol(d, scramble=True)
@@ -77,40 +63,22 @@ class custom_mosa():
         return qmc.scale(X01, lows, highs)
 
     def _farthest_points(self, n, X_existing, cand_mult=20000):
-        # Sample many Sobol candidates, pick those farthest from existing archive
         names, lows, highs = self._bounds_arrays()
         d = len(names)
         eng = qmc.Sobol(d, scramble=True)
         m = int(np.ceil(np.log2(max(2, cand_mult))))
         C = qmc.scale(eng.random_base2(m)[:cand_mult], lows, highs)
-
         if X_existing is None or len(X_existing) == 0:
             return C[:n]
-
         tree = KDTree(X_existing)
         dmin, _ = tree.query(C, k=1)
         idx = np.argsort(dmin.ravel())[::-1][:n]
         return C[idx]
 
-    def _local_refinement(self, n, X_pareto, weights, step=0.05):
-        # Gaussian jitter around Pareto points; weights ~ crowding distance
-        names, lows, highs = self._bounds_arrays()
-        if X_pareto is None or len(X_pareto) == 0:
-            return self._sobol_batch(n)
-
-        rng = np.random.default_rng()
-        w = np.asarray(weights, float)
-        w = w / (w.sum() + 1e-12)
-        idx = rng.choice(len(X_pareto), size=n, p=w)
-        centers = X_pareto[idx]
-        sigma = step * (highs - lows)
-        X = rng.normal(loc=centers, scale=sigma)
-        return np.clip(X, lows, highs)
-
     def _nondominated_mask(self, F):
-        # Fast non-dominated mask in 2D (minimization)
+        # 2D, minimization
         n = F.shape[0]
-        order = np.argsort(F[:, 0], kind='mergesort')  # stable tie-break
+        order = np.argsort(F[:, 0], kind='mergesort')
         F_sorted = F[order]
         mask_sorted = np.ones(n, dtype=bool)
         best_f2 = np.inf
@@ -125,90 +93,143 @@ class custom_mosa():
         return mask
 
     def _crowding_distance(self, F_front):
-        # Standard crowding distance for 2D (finite, positive)
         n = len(F_front)
-        if n == 0:
-            return np.array([])
-        if n == 1:
-            return np.array([1.0])
+        if n == 0: return np.array([])
+        if n == 1: return np.array([1.0])
         D = np.zeros(n, float)
         for k in range(F_front.shape[1]):
             idx = np.argsort(F_front[:, k])
             D[idx[0]] = D[idx[-1]] = np.inf
             f = F_front[idx, k]
-            fmin, fmax = f[0], f[-1]
-            denom = (fmax - fmin) if fmax > fmin else 1.0
-            for i in range(1, n - 1):
-                D[idx[i]] += (f[i + 1] - f[i - 1]) / denom
-        # replace inf with large finite for weighting
+            den = (f[-1] - f[0]) if f[-1] > f[0] else 1.0
+            for i in range(1, n-1):
+                D[idx[i]] += (f[i+1] - f[i-1]) / den
         inf_mask = ~np.isfinite(D)
         if inf_mask.any():
             finite_max = np.max(D[~inf_mask]) if (~inf_mask).any() else 1.0
             D[inf_mask] = 10.0 * max(1.0, finite_max)
         return np.maximum(D, 1e-12)
-
-    def _apply_badmask(self, F, X):
-        # Drop rows with sentinel or non-finite values
-        bad = (F[:, 0] == 1e6) | (F[:, 1] == 1e6) | ~np.isfinite(F).all(axis=1)
-        return F[~bad], X[~bad]
-
-    # =========================
-    # NEW: adaptive, space-filling runner
-    # =========================
-    def run_adaptive(self, runs=3, batch_size=1000, explore_frac=0.5, use_tqdm=True, refine_step=0.05):
+    
+    def run_mosa_adaptive(self, runs=3, batch_size=1000, explore_frac=0.5, refine_step=0.05, use_tqdm=False):
         """
-        Batch-iterative sampling:
-          - Run 0: Sobol (space-filling) batch
-          - Later runs: explore (farthest) + exploit (local refinement around Pareto)
-        Keeps self.func_1, self.func_2, self.params aligned for your plotting & pruning.
+        MOSA with adaptive seeding:
+        - Run 0: Sobol seeds (space-filling).
+        - Runs >=1: exploration (farthest from archive) + exploitation (around Pareto, weighted by crowding distance).
+        Each seed is evolved by the MOSA kernel (your acceptance rule).
+        Archives are accumulated in self.func_1, self.func_2, and self.params[*].
         """
         bar = tqdm if use_tqdm else dummy_tqdm
 
         # reset archives
-        self.func_1 = []
-        self.func_2 = []
-        self.params = {key: [] for key in self.param_names}
+        self.func_1, self.func_2 = [], []
+        self.params = {k: [] for k in self.param_names}
 
         X_all = np.empty((0, len(self.param_names)), float)
         F_all = np.empty((0, 2), float)
 
         with bar(total=runs, desc="Runs", position=0) as outer:
             for r in range(runs):
+                # ---- choose starting points for this run ----
                 if r == 0:
-                    X = self._sobol_batch(batch_size)
+                    X0 = self._sobol_batch(batch_size)
                 else:
-                    # current Pareto from archive
+                    # current Pareto + crowding distance
                     mask_nd = self._nondominated_mask(F_all)
                     X_pareto = X_all[mask_nd]
                     F_pareto = F_all[mask_nd]
                     cd = self._crowding_distance(F_pareto)
 
-                    n_explore = int(round(batch_size * explore_frac))
-                    n_exploit = batch_size - n_explore
+                    n_exp = int(round(batch_size * explore_frac))
+                    n_expl = batch_size - n_exp
+                    X_exp  = self._farthest_points(n_exp, X_all, cand_mult=max(20000, 20*batch_size))
 
-                    X_exp  = self._farthest_points(n_explore, X_all, cand_mult=max(20000, 20 * batch_size))
-                    X_expl = self._local_refinement(n_exploit, X_pareto, cd, step=refine_step)
-                    X = np.vstack([X_exp, X_expl])
+                    # local refinement: Gaussian jitter around Pareto points (weighted by crowding distance)
+                    if len(X_pareto) == 0:
+                        X_expl = self._sobol_batch(n_expl)
+                    else:
+                        names, lows, highs = self._bounds_arrays()
+                        rng = np.random.default_rng()
+                        probs = cd / (cd.sum() + 1e-12)
+                        idx = rng.choice(len(X_pareto), size=n_expl, p=probs)
+                        centers = X_pareto[idx]
+                        sigma = refine_step * (highs - lows)
+                        X_expl = np.clip(rng.normal(loc=centers, scale=sigma), lows, highs)
 
-                # evaluate
-                F = self._evaluate_batch(X)
-                F, X = self._apply_badmask(F, X)  # drop 1e6/non-finite rows
+                    X0 = np.vstack([X_exp, X_expl])
 
-                # merge into archives
-                X_all = np.vstack([X_all, X]) if len(X_all) else X
-                F_all = np.vstack([F_all, F]) if len(F_all) else F
+                # ---- build initial population (dicts + objective dicts) ----
+                starts = [dict(zip(self.param_names, row)) for row in X0]
+                fstarts = [self.objectives([d[p] for p in self.param_names], self.choice1, self.choice2) for d in starts]
+
+                pop = [{'vars': {name: starts[j][name] for name in self.param_names},
+                        'f': fstarts[j].copy()} for j in range(len(starts))]
+
+                # ---- MOSA kernel (your acceptance rule) ----
+                temp = self.initial_temp
+                last_percent = 0.0
+                with bar(total=100, desc="Temperatures", unit='%', leave=False, position=1) as temp_pbar:
+                    while temp >= self.final_temp:
+                        with bar(total=self.num_iterations, desc="Iterations", leave=False, position=2) as iter_pbar:
+                            for it in range(self.num_iterations):
+                                idx = it % len(pop)  # safe even if num_iterations > population size
+                                vars_curr = pop[idx]['vars']
+                                f_curr    = pop[idx]['f']
+
+                                # propose neighbor (same step rule as your original code)
+                                vars_new = {}
+                                for name in self.param_names:
+                                    lo, hi = self.bounds[name]
+                                    vars_new[name] = np.clip(
+                                        vars_curr[name] + np.random.uniform(-self.step_size, self.step_size),
+                                        lo, hi
+                                    )
+                                f_new = self.objectives([vars_new[p] for p in self.param_names], self.choice1, self.choice2)
+
+                                # multi-objective annealing acceptance
+                                gamma = 1.0
+                                pmax = 0.0
+                                for key in f_new:
+                                    if f_new[key] < f_curr[key]:
+                                        p = 1.0
+                                    else:
+                                        p = np.exp(-(f_new[key] - f_curr[key]) / temp)
+                                    if p > pmax: pmax = p
+                                    gamma *= p
+                                gamma = self.alpha * pmax + (1.0 - self.alpha) * gamma
+
+                                if (gamma == 1.0) or (gamma > random.random()):
+                                    pop[idx] = {'vars': {n: vars_new[n] for n in self.param_names},
+                                                'f': f_new.copy()}
+
+                                iter_pbar.update(1)
+
+                        temp *= self.cooling_rate
+                        percent = (self.initial_temp - temp) / (self.initial_temp - self.final_temp) * 100.0
+                        temp_pbar.update(percent - last_percent)
+                        last_percent = percent
+
+                # ---- archive this run ----
+                F = np.array([[ind['f'][self.func_names[0]], ind['f'][self.func_names[1]]] for ind in pop], float)
+                X = np.array([[ind['vars'][n] for n in self.param_names] for ind in pop], float)
+
+                # filter sentinels / non-finite
+                good = (F[:,0] != 1e6) & (F[:,1] != 1e6) & np.isfinite(F).all(axis=1)
+                F = F[good]; X = X[good]
+
+                X_all = np.vstack([X_all, X]) if X_all.size else X
+                F_all = np.vstack([F_all, F]) if F_all.size else F
+
+                self.func_1.extend(F[:,0].tolist())
+                self.func_2.extend(F[:,1].tolist())
+                for j, name in enumerate(self.param_names):
+                    self.params[name].extend(X[:, j].tolist())
 
                 outer.update(1)
 
-        # finalize class fields
-        self.func_1 = F_all[:, 0].astype(float)
-        self.func_2 = F_all[:, 1].astype(float)
-        for j, name in enumerate(self.param_names):
-            self.params[name] = X_all[:, j].tolist()
+        # finalize archive arrays
+        self.func_1 = np.asarray(self.func_1, float)
+        self.func_2 = np.asarray(self.func_2, float)
 
-    # =========================
-    # PRUNING & PLOTTING
-    # =========================
     def prune(self):
         # compute non-dominated set from unpruned archives
         F = np.column_stack((np.asarray(self.func_1, float), np.asarray(self.func_2, float)))
@@ -278,7 +299,7 @@ class custom_mosa():
         plt.tight_layout()
         plt.show()
 
-    def plot(self):
+    def plot(self, time):
         if self.pareto_front is None or self.param_space is None:
             raise RuntimeError("Call prune() before plot().")
 
@@ -334,9 +355,19 @@ class custom_mosa():
             ax4.grid(True)
             ax4.set_box_aspect([1, 1, 1])
 
-        plt.tight_layout()
-        plt.show()
+        comment_text = f'GD = {self.gd}, IGD = {self.igd}\n Running Time = {time}'
+        fig.text(0.5, 0.02, comment_text, ha='center', va='bottom', fontsize=14, wrap=True)
+
+        # Adjust layout to prevent text from overlapping with the plot
+        plt.tight_layout(rect=[0, 0.05, 1, 1])
+
+        if self.circuit == 'posneg':
+            plt.savefig(f'out/mosa_{self.circuit}_{self.choice1}{self.choice2}.jpg')
+        else:
+            plt.savefig(f'out/mosa_{self.circuit}.jpg')
 
     def gd_igd(self, ref):
-        ind = GD(ref)
-        print("\nGeneration Distance = ", ind(self.pareto_front))
+        gd = GD(ref)
+        igd = IGD(ref)
+        self.gd = gd(self.pareto_front)
+        self.igd = igd(self.pareto_front)
