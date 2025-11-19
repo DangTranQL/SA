@@ -1,0 +1,5 @@
+Initial solutions,New solutions,Iterations,Runtime - Neg,Runtime - Pos-neg
+32,20000,1,2 mins,6 mins 
+32,20000,10,22 mins,50 mins
+1024,20000,1,1 hour 6 mins,2 hours 52 mins
+1024,20000,10,10 hours 43 mins,23 hours 24 mins
