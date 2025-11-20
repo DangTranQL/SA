@@ -21,7 +21,7 @@ def dummy_tqdm(*args, **kwargs):
     yield Dummy()
 
 class custom_mosa():
-    def __init__(self, initial_temp=1000, final_temp=0.01, cooling_rate=0.95, num_iterations=10, step_size=0.1):
+    def __init__(self, initial_temp=1000, final_temp=0.01, cooling_rate=0.95, num_iterations=1, step_size=0.1):
         self.initial_temp = initial_temp
         self.final_temp = final_temp
         self.cooling_rate = cooling_rate
@@ -153,7 +153,7 @@ class custom_mosa():
             D[inf_mask] = 10.0 * max(1.0, finite_max)
         return np.maximum(D, 1e-12)
     
-    def run_mosa_adaptive(self, runs=3, batch_size=32, explore_frac=0.5, refine_step=0.05, use_tqdm=True):
+    def run_mosa_adaptive(self, runs=3, batch_size=4096, explore_frac=0.5, refine_step=0.05, use_tqdm=True):
         """
         MOSA with adaptive seeding:
         - Run 0: Sobol seeds (space-filling).
@@ -299,20 +299,20 @@ class custom_mosa():
                 self.gd_igd_hv(r)
                 if r%5 == 0:
                     if self.circuit == 'neg':   
-                        np.savez(f'batch32_iter10/mosa_sobol_neg_{r}.npz', f1=self.plot_pareto[:, 0], f2=self.plot_pareto[:, 1])
+                        np.savez(f'batch4096_iter1/mosa_sobol_neg_{r}.npz', f1=self.plot_pareto[:, 0], f2=self.plot_pareto[:, 1])
                     else:
-                        np.savez(f'batch32_iter10/mosa_sobol_posneg_{r}.npz', f1=self.plot_pareto[:, 0], f2=self.plot_pareto[:, 1])
+                        np.savez(f'batch4096_iter1/mosa_sobol_posneg_{r}.npz', f1=self.plot_pareto[:, 0], f2=self.plot_pareto[:, 1])
                 elif r == 200:
                     if self.circuit == 'neg':
-                        np.savez(f'batch32_iter10/mosa_sobol_neg_{r}.npz', f1=self.pareto_front[:, 0], f2=self.pareto_front[:, 1])
+                        np.savez(f'batch4096_iter1/mosa_sobol_neg_{r}.npz', f1=self.pareto_front[:, 0], f2=self.pareto_front[:, 1])
                     else:
-                        np.savez(f'batch32_iter10/mosa_sobol_posneg_{r}.npz', f1=self.pareto_front[:, 0], f2=self.pareto_front[:, 1])
+                        np.savez(f'batch4096_iter1/mosa_sobol_posneg_{r}.npz', f1=self.pareto_front[:, 0], f2=self.pareto_front[:, 1])
 
                 outer.update(1)
 
                 # print(f"Finish Run {r}\n")
 
         if self.circuit == 'neg':
-            np.savez('batch32_iter10/mosa_sobol_neg_metrics.npz', gd=self.gd, igd=self.igd, hv=self.hv)
+            np.savez('batch4096_iter1/mosa_sobol_neg_metrics.npz', gd=self.gd, igd=self.igd, hv=self.hv)
         else:
-            np.savez('batch32_iter10/mosa_sobol_posneg_metrics.npz', gd=self.gd, igd=self.igd, hv=self.hv)
+            np.savez('batch4096_iter1/mosa_sobol_posneg_metrics.npz', gd=self.gd, igd=self.igd, hv=self.hv)
