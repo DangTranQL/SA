@@ -3,8 +3,8 @@ from scipy.optimize import fsolve
 import importlib
 
 # Choose circuit
-# circuit = input("Please enter name of the circuit: ")
-circuit = 'posneg'
+circuit = input("Please enter name of the circuit: ")
+# circuit = 'neg'
 
 if circuit != "neg" and circuit != "posneg":
     raise NameError(f'{circuit} is not supported')
