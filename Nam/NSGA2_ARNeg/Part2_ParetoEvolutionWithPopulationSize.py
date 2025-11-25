@@ -87,6 +87,22 @@ for columnnum, gens in enumerate(gens_list):
 
 # --------------------------------------------------------------------------------------------------
 
+# COMPUTE GENERATIONAL DISTANCES
+
+# Create storage
+GDs = np.full(Storage_EvolvingParetos_Popsize.shape, np.nan)
+
+# Define indicator once using the reference front
+ind = GD(gridsearchdata)
+
+# Evaluate generational distance of each Pareto front in data matrix
+for col, gens in enumerate(gens_list):                  # loop over generations
+    for row, popsize in enumerate(popsize_list):        # loop over population sizes
+        pf = Storage_EvolvingParetos_Popsize[row, col]  # get Pareto front
+        GDs[row, col] = ind(pf)                         # evaluate vs reference front
+
+# --------------------------------------------------------------------------------------------------
+
 # COMPUTE INVERTED GENERATIONAL DISTANCES
 
 # Create storage
@@ -95,7 +111,7 @@ IGDs = np.full(Storage_EvolvingParetos_Popsize.shape, np.nan)
 # Define indicator once using the reference front
 ind = IGD(gridsearchdata)
 
-# Evaluate generational distance of each Pareto front in data matrix
+# Evaluate inverted generational distance of each Pareto front in data matrix
 for col, gens in enumerate(gens_list):                  # loop over generations
     for row, popsize in enumerate(popsize_list):        # loop over population sizes
         pf = Storage_EvolvingParetos_Popsize[row, col]  # get Pareto front
@@ -138,6 +154,7 @@ np.savez(
     Storage_EvolvingParams_Popsize=Storage_EvolvingParams_Popsize,
     popsize_list=popsize_list,
     gens_list=gens_list,
+    GDs=GDs,
     IGDs=IGDs,
     HV_grid=HV_grid,
     HV_true=HV_true,
